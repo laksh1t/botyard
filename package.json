@@ -1,0 +1,16 @@
+{
+  "name": "botyard",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "keywords": [],
+  "description": "",
+  "dependencies": {
+    "dockerode": "^4.0.10",
+    "dotenv": "^17.3.1"
+  }
+}
