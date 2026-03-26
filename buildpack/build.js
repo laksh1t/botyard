@@ -7,87 +7,121 @@ const path = require("path");
 const Docker = require('dockerode');
 
 
-const workDir = process.env.WORK_DIR;
+const WORK_DIR = process.env.WORK_DIR;
 
-class ctx{
+class BuildContext {
+  constructor(userId, appName) {
 
-    constructor(){
+    this.userId   = userId;           
+    this.appName  = appName;         
 
-    this.userId;
-    this.image;
-    this.entrypoint;
+    this.appId    = `${userId}-${appName}`;         
+    this.workDir  = path.join(                        
+      process.env.BASE_DIR, "users", userId, appName
+    );
+
+    this.language        = null;      
+    this.runtimeVersion  = null;     
+    this.baseImage       = null;     
+
+    this.entrypoint      = null;      
+
+    this.containerName   = `user-${this.appId}-app`;
+    this.imageRepo       = `user-${this.appId}-image`;
+    this.fullImage       = `${this.imageRepo}:latest`;
+  }
+}
+
+function detectRuntime(ctx, callback) {
+  ctx.log("Detecting runtime...");
+
+  fs.readdir(ctx.workDir, (err, files) => {
+    if (err) {
+      ctx.status = "error";
+      return callback(err);
     }
-}
 
-function detectRuntime(workDir){
-    fs.readdir(workDir,(err,files)=>{
-        if(err){
-            console.log(err);
-            return;
+    if (files.includes("requirements.txt")) {
+      ctx.language = "python";
+
+      const runtimePath = path.join(ctx.workDir, "runtime.txt");
+
+      fs.readFile(runtimePath, "utf-8", (err, data) => {
+        let version = "3.11";
+
+        if (!err && data.startsWith("Python")) {
+          version = data.replace("Python", "").trim();
         }
-        if(!files.includes("requirements.txt")){
-            console.log("requirements.txt not found");
-            return;
+
+        ctx.runtimeVersion = version;
+        ctx.baseImage = `python:${version}-slim`;
+
+        if (!ctx.runCmd) {
+          ctx.runCmd = ["python", ctx.entrypoint];
         }
-        if(!files.includes("runtime.txt")){
-            console.log("runtime.txt not found");
-            return;
+
+        ctx.log(`Detected Python ${version}`);
+        return callback(null, ctx);
+      });
+
+      return;
+    }
+
+    if (files.includes("package.json")) {
+      ctx.language = "node";
+
+      const runtimePath = path.join(ctx.workDir, "runtime.txt");
+
+      fs.readFile(runtimePath, "utf-8", (err, data) => {
+        let version = "18";
+
+        if (!err && data.startsWith("v")) {
+          version = data.replace("v", "").trim();
         }
-    })
-    fs.readFile(path.join(workDir,"runtime.txt"),"utf-8",(err,data)=>{
-        if(err){
-            console.log(err);
-            return;
-        }
-        if(data.startsWith("Python")){
-            try{
-                const version = data.replace("Python ","")
-                console.log("python:"+version);
-            } catch(err){
-            //pass
+
+        ctx.runtimeVersion = version;
+        ctx.baseImage = `node:${version}-alpine`;
+
+        if (!ctx.entrypoint) {
+          const pkgPath = path.join(ctx.workDir, "package.json");
+
+          fs.readFile(pkgPath, "utf-8", (err, pkgData) => {
+            try {
+              const pkg = JSON.parse(pkgData);
+              ctx.entrypoint = pkg.main || "index.js";
+            } catch {
+              ctx.entrypoint = "index.js";
             }
-        } else if(data.startsWith("v")){
-            try{
-                const version = data.replace("v","")
-                console.log("node:"+version);
-            } catch(err){
-            //pass
+
+            if (!ctx.runCmd) {
+              ctx.runCmd = ["node", ctx.entrypoint];
             }
-        } else{
-            console.log("Runtime not Detected");
+
+            ctx.log(`Detected Node ${version}`);
+            return callback(null, ctx);
+          });
+        } else {
+          if (!ctx.runCmd) {
+            ctx.runCmd = ["node", ctx.entrypoint];
+          }
+
+          ctx.log(`Detected Node ${version}`);
+          return callback(null, ctx);
         }
-    })
-    fs.readFile(path.join(workDir,"Worker"),'utf-8',(err,data)=>{
-        if(err){
-            console.log(err);
-            return;
-        }
-        console.log(data);
-    })
+      });
+
+      return;
+    }
+
+    return callback(new Error("No supported runtime detected"));
+  });
 }
 
-function createDockerfile(runtime,entrypoint){
-    const txt = `
-FROM ${runtime}
 
-WORKDIR /app
+function readWorkerfile(ctx){
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-CMD ["python", "${entrypoint}"]
-    
-    `;
-
-    fs.writeFile(path.join(workDir,"Dockerfile"),txt.trim(),'utf-8',(err)=>{
-        if(err){
-            console.log(err);
-            return;
-        }
-    })
 }
+
 
 async function orchestration(ctx) {
   const docker = new Docker();
@@ -122,7 +156,7 @@ async function orchestration(ctx) {
       Cmd: ['pip', 'install', '--no-cache-dir', '-r', 'requirements.txt'],
       WorkingDir: '/app',
       HostConfig: {
-        Binds: [`${workDir}:/app`]
+        Binds: [`${WORK_DIR}:/app`]
       }
     });
 
@@ -151,7 +185,7 @@ async function orchestration(ctx) {
       ],
 
       HostConfig: {
-        Binds: [`${workDir}:/app`],
+        Binds: [`${WORK_DIR}:/app`],
 
         Memory: 512 * 1024 * 1024,
         MemorySwap: 512 * 1024 * 1024,
@@ -191,7 +225,7 @@ async function orchestration(ctx) {
   }
 }
 
-//detectRuntime(workDir);
+//detectRuntime(WORK_DIR);
 //createDockerfile("python:3.12.0","main.py");
 ctx.image="python:3.11-slim";
 ctx.entrypoint="main.py";
