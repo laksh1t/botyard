@@ -1,5 +1,5 @@
 require('dotenv').config({
-    path: require('path').join(__dirname, '../.env')
+  path: require('path').join(__dirname, '../.env')
 });
 const os = require("os");
 const fs = require("fs");
@@ -12,23 +12,27 @@ const WORK_DIR = process.env.WORK_DIR;
 class BuildContext {
   constructor(userId, appName) {
 
-    this.userId   = userId;           
-    this.appName  = appName;         
+    this.userId = userId;
+    this.appName = appName;
 
-    this.appId    = `${userId}-${appName}`;         
-    this.workDir  = path.join(                        
-      process.env.BASE_DIR, "users", userId, appName
+    this.appId = `${userId}-${appName}`;
+    this.workDir = path.join(
+      process.env.BASE_DIR || path.join(__dirname, "../"), "users", userId, appName
     );
 
-    this.language        = null;      
-    this.runtimeVersion  = null;     
-    this.baseImage       = null;     
+    this.language = null;
+    this.runtimeVersion = null;
+    this.baseImage = null;
+    this.image = null;
 
-    this.entrypoint      = null;      
+    this.entrypoint = null;
 
-    this.containerName   = `user-${this.appId}-app`;
-    this.imageRepo       = `user-${this.appId}-image`;
-    this.fullImage       = `${this.imageRepo}:latest`;
+    this.containerName = `user-${this.appId}-app`;
+    this.imageRepo = `user-${this.appId}-image`;
+    this.fullImage = `${this.imageRepo}:latest`;
+
+    // Simple logging utility for detectRuntime
+    this.log = (msg) => console.log(msg);
   }
 }
 
@@ -118,7 +122,7 @@ function detectRuntime(ctx, callback) {
 }
 
 
-function readWorkerfile(ctx){
+function readWorkerfile(ctx) {
 
 }
 
@@ -133,7 +137,7 @@ async function orchestration(ctx) {
   try {
     try {
       await docker.getContainer(containerName).remove({ force: true });
-    } catch (e) {}
+    } catch (e) { }
 
     try {
       await docker.getImage(ctx.image).inspect();
@@ -152,7 +156,7 @@ async function orchestration(ctx) {
 
     console.log('Installing dependencies...');
     const buildContainer = await docker.createContainer({
-      Image: ctx.image, 
+      Image: ctx.image,
       Cmd: ['pip', 'install', '--no-cache-dir', '-r', 'requirements.txt'],
       WorkingDir: '/app',
       HostConfig: {
@@ -175,7 +179,7 @@ async function orchestration(ctx) {
       Image: fullImage,
       name: containerName,
 
-      Cmd: ['python', ctx.entrypoint], 
+      Cmd: ['python', ctx.entrypoint],
 
       WorkingDir: '/app',
 
@@ -227,8 +231,8 @@ async function orchestration(ctx) {
 
 //detectRuntime(WORK_DIR);
 //createDockerfile("python:3.12.0","main.py");
-ctx.image="python:3.11-slim";
-ctx.entrypoint="main.py";
-ctx.userId="lakshit-escrowbot";
+const ctx = new BuildContext("lakshit-escrowbot", "escrowbot");
+ctx.image = "python:3.11-slim";
+ctx.entrypoint = "main.py";
 orchestration(ctx);
 
