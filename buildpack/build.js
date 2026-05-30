@@ -3,17 +3,18 @@ require('dotenv').config({
 });
 const os = require("os");
 const fs = require("fs");
+const fsPromises = require("fs").promises;
 const path = require("path");
 const Docker = require('dockerode');
-
 
 const WORK_DIR = process.env.WORK_DIR;
 
 class BuildContext {
-  constructor(userId, appName) {
-
+  constructor(userId, appName, githubUrl = null, envVars = {}) {
     this.userId = userId;
     this.appName = appName;
+    this.githubUrl = githubUrl;
+    this.envVars = envVars;
 
     this.appId = `${userId}-${appName}`;
     this.workDir = path.join(
@@ -23,116 +24,113 @@ class BuildContext {
     this.language = null;
     this.runtimeVersion = null;
     this.baseImage = null;
-    this.image = null;
+    this.installCmd = null;
 
     this.entrypoint = null;
+    this.runCmd = null;
 
     this.containerName = `user-${this.appId}-app`;
     this.imageRepo = `user-${this.appId}-image`;
     this.fullImage = `${this.imageRepo}:latest`;
-
-    // Simple logging utility for detectRuntime
-    this.log = (msg) => console.log(msg);
   }
 }
 
-function detectRuntime(ctx, callback) {
-  ctx.log("Detecting runtime...");
+async function detectRuntime(ctx) {
+  console.log("Detecting runtime...");
+  const files = await fsPromises.readdir(ctx.workDir);
 
-  fs.readdir(ctx.workDir, (err, files) => {
-    if (err) {
-      ctx.status = "error";
-      return callback(err);
+  if (files.includes("Worker")) {
+    try {
+      const workerData = await fsPromises.readFile(path.join(ctx.workDir, "Worker"), "utf-8");
+      const lines = workerData.split('\n');
+      for (const line of lines) {
+        if (line.trim().startsWith('entrypoint:')) {
+          ctx.entrypoint = line.split('entrypoint:')[1].trim();
+          console.log(`Parsed entrypoint from Worker file: ${ctx.entrypoint}`);
+          break;
+        }
+      }
+    } catch (e) {
+      console.error("Error reading Worker file:", e);
+    }
+  }
+
+  if (files.includes("requirements.txt")) {
+    ctx.language = "python";
+    let version = "3.11";
+    try {
+      const data = await fsPromises.readFile(path.join(ctx.workDir, "runtime.txt"), "utf-8");
+      if (data.startsWith("Python")) {
+        version = data.replace("Python", "").trim();
+      }
+    } catch (e) { }
+
+    ctx.runtimeVersion = version;
+    ctx.baseImage = `python:${version}-slim`;
+    ctx.installCmd = ['pip', 'install', '--no-cache-dir', '-r', 'requirements.txt'];
+
+    if (!ctx.entrypoint) {
+      if (files.includes("main.py")) ctx.entrypoint = "main.py";
+      else if (files.includes("app.py")) ctx.entrypoint = "app.py";
+      else if (files.includes("bot.py")) ctx.entrypoint = "bot.py";
+      else ctx.entrypoint = "main.py"; // fallback
     }
 
-    if (files.includes("requirements.txt")) {
-      ctx.language = "python";
-
-      const runtimePath = path.join(ctx.workDir, "runtime.txt");
-
-      fs.readFile(runtimePath, "utf-8", (err, data) => {
-        let version = "3.11";
-
-        if (!err && data.startsWith("Python")) {
-          version = data.replace("Python", "").trim();
-        }
-
-        ctx.runtimeVersion = version;
-        ctx.baseImage = `python:${version}-slim`;
-
-        if (!ctx.runCmd) {
-          ctx.runCmd = ["python", ctx.entrypoint];
-        }
-
-        ctx.log(`Detected Python ${version}`);
-        return callback(null, ctx);
-      });
-
-      return;
+    if (!ctx.runCmd) {
+      ctx.runCmd = ["python", ctx.entrypoint];
     }
+    console.log(`Detected Python ${version}`);
+    return ctx;
+  }
 
-    if (files.includes("package.json")) {
-      ctx.language = "node";
+  if (files.includes("package.json")) {
+    ctx.language = "node";
+    let version = "18";
+    try {
+      const data = await fsPromises.readFile(path.join(ctx.workDir, "runtime.txt"), "utf-8");
+      if (data.startsWith("v")) {
+        version = data.replace("v", "").trim();
+      }
+    } catch (e) { }
 
-      const runtimePath = path.join(ctx.workDir, "runtime.txt");
+    ctx.runtimeVersion = version;
+    ctx.baseImage = `node:${version}-alpine`;
+    ctx.installCmd = ['npm', 'install'];
 
-      fs.readFile(runtimePath, "utf-8", (err, data) => {
-        let version = "18";
+    try {
+      const pkgData = await fsPromises.readFile(path.join(ctx.workDir, "package.json"), "utf-8");
+      const pkg = JSON.parse(pkgData);
 
-        if (!err && data.startsWith("v")) {
-          version = data.replace("v", "").trim();
-        }
-
-        ctx.runtimeVersion = version;
-        ctx.baseImage = `node:${version}-alpine`;
-
-        if (!ctx.entrypoint) {
-          const pkgPath = path.join(ctx.workDir, "package.json");
-
-          fs.readFile(pkgPath, "utf-8", (err, pkgData) => {
-            try {
-              const pkg = JSON.parse(pkgData);
-              ctx.entrypoint = pkg.main || "index.js";
-            } catch {
-              ctx.entrypoint = "index.js";
-            }
-
-            if (!ctx.runCmd) {
-              ctx.runCmd = ["node", ctx.entrypoint];
-            }
-
-            ctx.log(`Detected Node ${version}`);
-            return callback(null, ctx);
-          });
+      if (!ctx.entrypoint) {
+        if (pkg.scripts && pkg.scripts.start && pkg.scripts.start !== "echo \"Error: no test specified\" && exit 1") {
+          ctx.runCmd = ['npm', 'start'];
         } else {
-          if (!ctx.runCmd) {
-            ctx.runCmd = ["node", ctx.entrypoint];
-          }
-
-          ctx.log(`Detected Node ${version}`);
-          return callback(null, ctx);
+          ctx.entrypoint = pkg.main || "index.js";
         }
-      });
-
-      return;
+      }
+    } catch {
+      if (!ctx.entrypoint) {
+        ctx.entrypoint = "index.js";
+      }
     }
 
-    return callback(new Error("No supported runtime detected"));
-  });
+    if (!ctx.runCmd) {
+      ctx.runCmd = ["node", ctx.entrypoint];
+    }
+
+    console.log(`Detected Node ${version}`);
+    return ctx;
+  }
+
+  throw new Error("No supported runtime detected! Ensure package.json or requirements.txt exists.");
 }
-
-
-function readWorkerfile(ctx) {
-
-}
-
 
 async function orchestration(ctx) {
   const docker = new Docker();
-  const containerName = `user-${ctx.userId}-app`;
-  const imageRepo = `user-${ctx.userId}-image`;
+  const containerName = ctx.containerName;
+  const imageRepo = ctx.imageRepo;
   const imageTag = 'latest';
-  const fullImage = `${imageRepo}:${imageTag}`;
+  const fullImage = ctx.fullImage;
 
   try {
     try {
@@ -140,11 +138,11 @@ async function orchestration(ctx) {
     } catch (e) { }
 
     try {
-      await docker.getImage(ctx.image).inspect();
+      await docker.getImage(ctx.baseImage).inspect();
     } catch (e) {
-      console.log('Pulling image...');
+      console.log(`Pulling image: ${ctx.baseImage}...`);
       await new Promise((resolve, reject) => {
-        docker.pull(ctx.image, (err, stream) => {
+        docker.pull(ctx.baseImage, (err, stream) => {
           if (err) return reject(err);
           docker.modem.followProgress(stream, (err) => {
             if (err) reject(err);
@@ -154,19 +152,21 @@ async function orchestration(ctx) {
       });
     }
 
-    console.log('Installing dependencies...');
+    console.log(`Installing dependencies using ${ctx.installCmd.join(' ')}...`);
     const buildContainer = await docker.createContainer({
-      Image: ctx.image,
-      Cmd: ['pip', 'install', '--no-cache-dir', '-r', 'requirements.txt'],
+      Image: ctx.baseImage,
+      Cmd: ctx.installCmd,
       WorkingDir: '/app',
       HostConfig: {
-        Binds: [`${WORK_DIR}:/app`]
+        Binds: [`${ctx.workDir}:/app`]
       }
     });
 
     await buildContainer.start();
-    await buildContainer.wait();
+    const stream = await buildContainer.logs({ follow: true, stdout: true, stderr: true });
+    buildContainer.modem.demuxStream(stream, process.stdout, process.stderr);
 
+    await buildContainer.wait();
     console.log('Committing image...');
     await buildContainer.commit({
       repo: imageRepo,
@@ -175,64 +175,66 @@ async function orchestration(ctx) {
 
     await buildContainer.remove();
 
+    // Map custom env vars and system env vars
+    const envList = [
+      `PORT=3000`,
+      `USER_ID=${ctx.userId}`,
+      `PYTHONUNBUFFERED=1`
+    ];
+    for (const [key, val] of Object.entries(ctx.envVars)) {
+      envList.push(`${key}=${val}`);
+    }
+
     const appContainer = await docker.createContainer({
       Image: fullImage,
       name: containerName,
-
-      Cmd: ['python', ctx.entrypoint],
-
+      Cmd: ctx.runCmd,
       WorkingDir: '/app',
-
-      Env: [
-        `PORT=3000`,
-        `USER_ID=${ctx.userId}`
-      ],
-
+      Env: envList,
       HostConfig: {
-        Binds: [`${WORK_DIR}:/app`],
-
-        Memory: 512 * 1024 * 1024,
-        MemorySwap: 512 * 1024 * 1024,
-        NanoCpus: 500000000,
-        PidsLimit: 100,
-
+        Binds: [`${ctx.workDir}:/app`],
+        Memory: 512 * 1024 * 1024,      // 512MB RAM
+        MemorySwap: 512 * 1024 * 1024,  // No extra swap
+        NanoCpus: 500000000,            // 0.5 CPU
+        PidsLimit: 100,                 // Limit forks/threads
         RestartPolicy: {
           Name: "unless-stopped"
         },
-
         NetworkMode: 'bridge',
         CapDrop: ['ALL']
       },
-
       Tty: false,
       OpenStdin: false,
       AttachStdout: true,
       AttachStderr: true,
-
-      User: '1000:1000'
     });
 
     await appContainer.start();
-
     console.log('Running:', appContainer.id);
 
-    const stream = await appContainer.logs({
+    // Stream container logs to stdout/stderr in this CLI tool so we see it run
+    const appStream = await appContainer.logs({
       follow: true,
       stdout: true,
       stderr: true
     });
+    appContainer.modem.demuxStream(appStream, process.stdout, process.stderr);
 
-    appContainer.modem.demuxStream(stream, process.stdout, process.stderr);
-
+    return appContainer;
   } catch (err) {
-    console.error('Error:', err);
+    console.error('Error in orchestration:', err);
+    throw err;
   }
 }
 
-//detectRuntime(WORK_DIR);
-//createDockerfile("python:3.12.0","main.py");
-const ctx = new BuildContext("lakshit-escrowbot", "escrowbot");
-ctx.image = "python:3.11-slim";
-ctx.entrypoint = "main.py";
-orchestration(ctx);
+async function main() {
+  const ctx = new BuildContext("lakshit", "escrowbot");
+  try {
+    await detectRuntime(ctx);
+    await orchestration(ctx);
+  } catch (err) {
+    console.error("Deployment failed:", err);
+  }
+}
 
+main();
