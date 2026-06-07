@@ -6,8 +6,10 @@ const fs = require("fs");
 const fsPromises = require("fs").promises;
 const path = require("path");
 const Docker = require('dockerode');
+const { exec } = require("child_process");
+const util = require("util");
+const execPromise = util.promisify(exec);
 
-const WORK_DIR = process.env.WORK_DIR;
 
 class BuildContext {
   constructor(userId, appName, githubUrl = null, envVars = {}) {
@@ -39,6 +41,8 @@ async function detectRuntime(ctx) {
   console.log("Detecting runtime...");
   const files = await fsPromises.readdir(ctx.workDir);
 
+  //checking for worker file
+
   if (files.includes("Worker")) {
     try {
       const workerData = await fsPromises.readFile(path.join(ctx.workDir, "Worker"), "utf-8");
@@ -54,6 +58,8 @@ async function detectRuntime(ctx) {
       console.error("Error reading Worker file:", e);
     }
   }
+
+  //checking for requirements.txt file
 
   if (files.includes("requirements.txt")) {
     ctx.language = "python";
@@ -73,15 +79,16 @@ async function detectRuntime(ctx) {
       if (files.includes("main.py")) ctx.entrypoint = "main.py";
       else if (files.includes("app.py")) ctx.entrypoint = "app.py";
       else if (files.includes("bot.py")) ctx.entrypoint = "bot.py";
-      else ctx.entrypoint = "main.py"; // fallback
+      else ctx.entrypoint = "main.py";
     }
 
     if (!ctx.runCmd) {
       ctx.runCmd = ["python", ctx.entrypoint];
     }
-    console.log(`Detected Python ${version}`);
     return ctx;
   }
+
+  //checking for package.json file
 
   if (files.includes("package.json")) {
     ctx.language = "node";
@@ -175,7 +182,6 @@ async function orchestration(ctx) {
 
     await buildContainer.remove();
 
-    // Map custom env vars and system env vars
     const envList = [
       `PORT=3000`,
       `USER_ID=${ctx.userId}`,
@@ -193,10 +199,10 @@ async function orchestration(ctx) {
       Env: envList,
       HostConfig: {
         Binds: [`${ctx.workDir}:/app`],
-        Memory: 512 * 1024 * 1024,      // 512MB RAM
-        MemorySwap: 512 * 1024 * 1024,  // No extra swap
-        NanoCpus: 500000000,            // 0.5 CPU
-        PidsLimit: 100,                 // Limit forks/threads
+        Memory: 512 * 1024 * 1024,
+        MemorySwap: 512 * 1024 * 1024,
+        NanoCpus: 500000000,
+        PidsLimit: 100,
         RestartPolicy: {
           Name: "unless-stopped"
         },
@@ -212,7 +218,6 @@ async function orchestration(ctx) {
     await appContainer.start();
     console.log('Running:', appContainer.id);
 
-    // Stream container logs to stdout/stderr in this CLI tool so we see it run
     const appStream = await appContainer.logs({
       follow: true,
       stdout: true,
@@ -226,15 +231,32 @@ async function orchestration(ctx) {
     throw err;
   }
 }
-
-async function main() {
-  const ctx = new BuildContext("lakshit", "escrowbot");
-  try {
-    await detectRuntime(ctx);
-    await orchestration(ctx);
-  } catch (err) {
-    console.error("Deployment failed:", err);
-  }
+async function startBot(containerName) {
+  const docker = new Docker();
+  const container = docker.getContainer(containerName);
+  await container.start();
+  return { success: true };
 }
 
-main();
+async function stopBot(containerName) {
+  const docker = new Docker();
+  const container = docker.getContainer(containerName);
+  await container.stop();
+  return { success: true };
+}
+
+async function restartBot(containerName) {
+  const docker = new Docker();
+  const container = docker.getContainer(containerName);
+  await container.restart();
+  return { success: true };
+}
+
+module.exports = {
+  BuildContext,
+  detectRuntime,
+  orchestration,
+  startBot,
+  stopBot,
+  restartBot
+};
