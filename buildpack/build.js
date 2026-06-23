@@ -252,8 +252,47 @@ async function restartBot(containerName) {
   return { success: true };
 }
 
+async function prepareSource(ctx, zipBuffer) {
+  if (ctx.githubUrl) {
+    console.log(`Cloning ${ctx.githubUrl} into ${ctx.workDir}...`);
+    await fsPromises.mkdir(path.dirname(ctx.workDir), { recursive: true });
+    try {
+      await fsPromises.rm(ctx.workDir, { recursive: true, force: true });
+    } catch (e) { }
+    await execPromise(`git clone ${ctx.githubUrl} "${ctx.workDir}"`);
+  } else if (zipBuffer) {
+    console.log(`Extracting uploaded ZIP to ${ctx.workDir}...`);
+    await fsPromises.mkdir(ctx.workDir, { recursive: true });
+    try {
+      await fsPromises.rm(ctx.workDir, { recursive: true, force: true });
+    } catch (e) { }
+    await fsPromises.mkdir(ctx.workDir, { recursive: true });
+    
+    const AdmZip = require("adm-zip");
+    const zip = new AdmZip(zipBuffer);
+    zip.extractAllTo(ctx.workDir, true);
+    
+    const extractedItems = await fsPromises.readdir(ctx.workDir);
+    if (extractedItems.length === 1) {
+      const nestedPath = path.join(ctx.workDir, extractedItems[0]);
+      const stat = await fsPromises.stat(nestedPath);
+      if (stat.isDirectory()) {
+        console.log(`Detected nested folder '${extractedItems[0]}'. Unwrapping...`);
+        const nestedItems = await fsPromises.readdir(nestedPath);
+        for (const item of nestedItems) {
+          await fsPromises.rename(path.join(nestedPath, item), path.join(ctx.workDir, item));
+        }
+        await fsPromises.rmdir(nestedPath);
+      }
+    }
+  } else {
+    await fsPromises.mkdir(ctx.workDir, { recursive: true });
+  }
+}
+
 module.exports = {
   BuildContext,
+  prepareSource,
   detectRuntime,
   orchestration,
   startBot,
