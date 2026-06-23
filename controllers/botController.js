@@ -1,16 +1,40 @@
 const buildpack = require('../buildpack/build');
 
 exports.deploy = async (req, res) => {
-  const { userId, appName } = req.body;
+  const { userId, appName, githubUrl } = req.body;
+  let envVars = req.body.envVars || {};
+
+  if (typeof envVars === 'string') {
+    try {
+      envVars = JSON.parse(envVars);
+    } catch (e) {
+      envVars = {};
+    }
+  }
+
   if (!userId || !appName) {
     return res.status(400).json({ error: "userId and appName are required" });
   }
 
-  const ctx = new buildpack.BuildContext(userId, appName);
+  const ctx = new buildpack.BuildContext(userId, appName, githubUrl, envVars);
+  const zipPath = req.file ? req.file.path : null;
 
   try {
+    await buildpack.prepareSource(ctx, zipPath);
+
+    if (zipPath) {
+      const fsPromises = require('fs').promises;
+      try {
+        await fsPromises.unlink(zipPath);
+      } catch (e) {
+        console.error("Failed to delete temp zip file:", e);
+      }
+    }
+
     await buildpack.detectRuntime(ctx);
+
     const container = await buildpack.orchestration(ctx);
+
     res.json({ message: "Deployment successful!", containerId: container.id });
   } catch (err) {
     console.error(err);
