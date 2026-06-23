@@ -7,5 +7,6 @@ const upload = multer({ dest: 'uploads/' });
 
 router.post('/deploy', upload.single('sourceFile'), botController.deploy);
 router.post('/:action', botController.action);
+router.get('/', botController.getBots);
 
 module.exports = router;
