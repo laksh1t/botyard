@@ -2,7 +2,8 @@ const buildpack = require('../buildpack/build');
 const pool = require('../db');
 
 exports.deploy = async (req, res) => {
-  const { userId, appName, githubUrl } = req.body;
+  const { appName, githubUrl } = req.body;
+  const userId = req.user.sub;
   let envVars = req.body.envVars || {};
 
   if (typeof envVars === 'string') {
@@ -79,7 +80,7 @@ exports.action = async (req, res) => {
 };
 
 exports.getBots = async (req, res) => {
-  const { userId } = req.query;
+  const userId = req.user.sub;
   if (!userId) {
     return res.status(400).json({ error: "userId query parameter is required" });
   }
