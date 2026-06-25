@@ -8,6 +8,7 @@ const upload = multer({ dest: 'uploads/' });
 
 router.post('/deploy', authMiddleware, upload.single('sourceFile'), botController.deploy);
 router.post('/:action', authMiddleware, botController.action);
+router.get('/:containerName/logs', authMiddleware, botController.logs);
 router.get('/', authMiddleware, botController.getBots);
 
 module.exports = router;

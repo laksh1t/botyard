@@ -52,12 +52,18 @@ exports.deploy = async (req, res) => {
 exports.action = async (req, res) => {
   const { action } = req.params;
   const { containerName } = req.body;
+  const userId = req.user.sub;
 
   if (!containerName) {
     return res.status(400).json({ error: "containerName is required in the body" });
   }
 
   try {
+    // AUTHORIZATION CHECK: Ensure the bot actually belongs to the user requesting the action
+    const botCheck = await pool.query("SELECT id FROM bots WHERE container_id = $1 AND user_id = $2", [containerName, userId]);
+    if (botCheck.rows.length === 0) {
+      return res.status(403).json({ error: "Forbidden: You do not own this bot or it does not exist." });
+    }
     if (action === 'start') {
       await buildpack.startBot(containerName);
       await pool.query("UPDATE bots SET status = 'running' WHERE container_id = $1", [containerName]);
@@ -91,5 +97,28 @@ exports.getBots = async (req, res) => {
   } catch (e) {
     console.error("Failed to fetch bots:", e);
     res.status(500).json({ error: "Failed to fetch bots", details: e.message });
+  }
+};
+
+exports.logs = async (req, res) => {
+  const { containerName } = req.params;
+  const userId = req.user.sub;
+
+  if (!containerName) {
+    return res.status(400).json({ error: "containerName required" });
+  }
+
+  try {
+    // AUTHORIZATION CHECK
+    const botCheck = await pool.query("SELECT id FROM bots WHERE container_id = $1 AND user_id = $2", [containerName, userId]);
+    if (botCheck.rows.length === 0) {
+      return res.status(403).json({ error: "Forbidden: You do not own this bot or it does not exist." });
+    }
+
+    const rawLogs = buildpack.getBotLogs(containerName);
+    res.json({ logs: rawLogs });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to fetch logs" });
   }
 };
