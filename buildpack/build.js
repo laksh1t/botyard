@@ -290,6 +290,8 @@ async function prepareSource(ctx, zipBuffer) {
   }
 }
 
+const { getBotLogs } = require('./logsService');
+
 module.exports = {
   BuildContext,
   prepareSource,
@@ -297,5 +299,6 @@ module.exports = {
   orchestration,
   startBot,
   stopBot,
-  restartBot
+  restartBot,
+  getBotLogs
 };
