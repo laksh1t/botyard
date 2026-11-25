@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
+    "start": "node server.js",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
@@ -10,11 +14,21 @@
   "keywords": [],
   "description": "",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1076.0",
+    "@vitejs/plugin-react": "^4.7.0",
     "adm-zip": "^0.5.17",
+    "bcrypt": "^6.0.0",
+    "bullmq": "^5.76.2",
+    "cors": "^2.8.6",
     "dockerode": "^4.0.10",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
+    "ioredis": "^5.10.1",
+    "jsonwebtoken": "^9.0.3",
     "multer": "^2.1.1",
-    "pg": "^8.22.0"
+    "pg": "^8.20.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "vite": "^6.4.2"
   }
 }

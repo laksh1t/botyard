@@ -1,3 +1,7 @@
 node_modules/
 .env
 users/
+uploads/
+logs/
+dist/
+bots/
